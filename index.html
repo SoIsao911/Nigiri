@@ -1563,6 +1563,11 @@ transform: translateX(16px);
             Batch
         </button>
         <div class="nav-divider"></div>
+        <button class="nav-btn" onclick="openFormulaWizard()" style="color:#BF5AF2;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            Wizard
+        </button>
+        <div class="nav-divider"></div>
         <button class="nav-btn" onclick="openSettings()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             Settings
@@ -2203,6 +2208,12 @@ v7.5 (2026-02-04) - Parameter Calibration
                     onmouseover="this.style.background='rgba(10,132,255,0.1)'; this.style.borderColor='#0A84FF';"
                     onmouseout="this.style.background='transparent'; this.style.borderColor='rgba(10,132,255,0.4)';">
                 ⎙ Print Report
+            </button>
+            <button id="btnExportPDF" onclick="exportAnalysisPDF()" 
+                    style="display: none; margin-left:8px; padding: 12px 20px; background: transparent; border: 1px solid rgba(255,159,10,0.4); border-radius: 10px; color: #FF9F0A; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.25s ease; letter-spacing: -0.2px;"
+                    onmouseover="this.style.background='rgba(255,159,10,0.1)'; this.style.borderColor='#FF9F0A';"
+                    onmouseout="this.style.background='transparent'; this.style.borderColor='rgba(255,159,10,0.4)';">
+                PDF Report
             </button>
         </div>
         
@@ -5157,7 +5168,7 @@ v7.5 (2026-02-04) - Parameter Calibration
             // Low EVA (≤30%): CI range 1.026~1.398 → Target 1.2, Range ±25%
             // Mid-High EVA + Low Exp: CI ≈ 0.75~0.78 → Target 0.77, Range ±15%
             // High EVA + High Exp: CI increases with interaction effect
-            function calcDynamicCIRange(predictedExpansion, pigment_phr, frAmount_phr, evaRatio) {
+            function calcDynamicCIRange(predictedExpansion, pigment_phr, frAmount_phr, evaRatio, poeRatio) {
                 // 1. Calculate Target CI based on EVA% and Expansion interaction
                 // v8.0: Recalibrated from 151-record production data
                 let targetCI;
@@ -5201,12 +5212,27 @@ v7.5 (2026-02-04) - Parameter Calibration
                     frFactor = 1 - Math.min(frAmount_phr * 0.008, 0.20);
                 }
                 
-                // 4. CI Range: no longer auto-corrects for POE
-                // POE formulas will show lower CI - this is real, not a model error
-                // Warning system will annotate POE β-scission effect instead
+                // 4. POE toughness compensation (RE-series)
+                // POE β-scission lowers apparent CI, but POE provides:
+                //   - High elongation (800%) → cell wall toughness
+                //   - Low Tm (59°C) → compliant matrix at room temp
+                // Net effect: POE formulas tolerate lower CI without quality loss
+                // Data: RE-137/138/139 CI 0.64~0.82 are all good products
+                let poeFactor = 1.0;
+                const poeR = poeRatio || 0;
+                if (poeR > 5) {
+                    // Widen range downward: CI lower bound drops proportionally to POE%
+                    // POE 10% → range widens 8%, POE 30% → range widens 20%
+                    const poeWidening = Math.min(poeR * 0.007, 0.25);
+                    rangePercent = rangePercent + poeWidening;
+                    poeFactor = 1 - Math.min(poeR * 0.003, 0.10);  // Target shifts down slightly
+                }
+                
+                // 5. CI Range: no longer auto-corrects for POE
+                // POE compensation is now built into the range calculation above
                 
                 // Apply adjustments to target
-                const adjustedTarget = targetCI * pigmentFactor * frFactor;
+                const adjustedTarget = targetCI * pigmentFactor * frFactor * poeFactor;
                 
                 // 5. CI Range: asymmetric — lower bound wider than upper bound
                 // Data shows good products cluster at 40% position in range
@@ -5226,6 +5252,7 @@ v7.5 (2026-02-04) - Parameter Calibration
                     baseTarget: targetCI,
                     pigmentFactor,
                     frFactor,
+                    poeFactor,
                     rangePercent,
                     factors: {
                         expansion: predictedExpansion,
@@ -5427,7 +5454,8 @@ v7.5 (2026-02-04) - Parameter Calibration
                     estimatedExpansion, 
                     pigment_phr || 0, 
                     flameRetardant_phr || 0, 
-                    evaRatio
+                    evaRatio,
+                    poe_phr / (eva_phr + ldpe_phr + poe_phr || 1) * 100
                 );
                 
                 // === 9b. POE-specific DCP evaluation (SABIC FORTIFY C0570D) ===
@@ -5477,6 +5505,17 @@ v7.5 (2026-02-04) - Parameter Calibration
                     const needAdd = (targetEffectiveDCP - effectiveDcp) * totalResin_kg * 1000;
                     suggestion = `Recommended增加DCP約 ${Math.max(10, needAdd).toFixed(0)}g 使CI達到${dynamicCI.ciOptimalLow.toFixed(3)}以上`;
                 }
+                // 交聯嚴重過度 (超過動態上限的130%)
+                else if (crosslinkCI > dynamicCI.ciMax * 1.30) {
+                    status = "嚴重過度";
+                    severity = "critical";
+                    warning = `[嚴重] 交聯指數嚴重過高(${crosslinkCI.toFixed(3)} >> ${dynamicCI.ciMax.toFixed(3)})，泡棉硬脆風險極高`;
+                    const targetCI = dynamicCI.ciOptimalHigh;
+                    const targetDcpRatio = targetCI / (effectiveReaction / 100);
+                    const targetEffectiveDCP = effectiveDCPNeed * targetDcpRatio;
+                    const canReduce = (effectiveDcp - targetEffectiveDCP) * totalResin_kg * 1000;
+                    suggestion = `Recommended減少DCP約 ${Math.max(10, canReduce).toFixed(0)}g`;
+                }
                 // 反應程度Insufficient
                 else if (effectiveReaction < 55 && dcpSupplyRatio >= 0.8) {
                     status = "反應不完全";
@@ -5484,27 +5523,51 @@ v7.5 (2026-02-04) - Parameter Calibration
                     warning = `[Warning] DCP反應不完全(${effectiveReaction.toFixed(1)}%)，交聯Limited`;
                     suggestion = `Recommended提高發泡溫度或延長時間`;
                 }
-                // 交聯過度 - Exceeded動態上限
+                // ===== 7-tier CI grading =====
+                // 交聯過度 - 超過動態上限 (>ciMax)
                 else if (crosslinkCI > dynamicCI.ciMax) {
-                    status = "交聯過度";
-                    severity = "warning";
-                    warning = `[Warning] 交聯指數Too High(${crosslinkCI.toFixed(3)} > ${dynamicCI.ciMax.toFixed(3)})，可能導致泡棉硬脆`;
+                    // Calculate how far beyond ciMax (as % of range width)
+                    const rangeWidth = dynamicCI.ciMax - dynamicCI.ciMin;
+                    const overAmount = crosslinkCI - dynamicCI.ciMax;
+                    const overPct = rangeWidth > 0 ? overAmount / rangeWidth : 0;
+                    
+                    if (overPct > 0.15) {
+                        // 明顯過高 (超出 > range寬度的15%)
+                        status = "交聯過高";
+                        severity = "warning";
+                        warning = `[Warning] 交聯指數過高(${crosslinkCI.toFixed(3)} > ${dynamicCI.ciMax.toFixed(3)})，可能導致泡棉硬脆`;
+                    } else {
+                        // 稍微偏高 (超出 ≤ range寬度的15%) — 輕微扣分
+                        status = "交聯稍偏高";
+                        severity = "mild";
+                        warning = `[Mild] 交聯指數稍偏高(${crosslinkCI.toFixed(3)}，上限${dynamicCI.ciMax.toFixed(3)})，品質影響輕微`;
+                    }
                     const targetCI = dynamicCI.ciOptimalHigh;
                     const targetDcpRatio = targetCI / (effectiveReaction / 100);
                     const targetEffectiveDCP = effectiveDCPNeed * targetDcpRatio;
                     const canReduce = (effectiveDcp - targetEffectiveDCP) * totalResin_kg * 1000;
-                    suggestion = `Recommended減少DCP約 ${Math.max(10, canReduce).toFixed(0)}g`;
+                    suggestion = `可考慮減少DCP約 ${Math.max(5, canReduce).toFixed(0)}g (CI→${targetCI.toFixed(3)})`;
                 }
                 // 交聯Insufficient - 低於動態下限
                 else if (crosslinkCI < dynamicCI.ciMin) {
-                    status = "交聯Insufficient";
-                    severity = "warning";
-                    warning = `[Warning] 交聯指數Low(${crosslinkCI.toFixed(3)} < ${dynamicCI.ciMin.toFixed(3)})，泡孔結構可能不穩定`;
+                    const rangeWidth = dynamicCI.ciMax - dynamicCI.ciMin;
+                    const underAmount = dynamicCI.ciMin - crosslinkCI;
+                    const underPct = rangeWidth > 0 ? underAmount / rangeWidth : 0;
+                    
+                    if (underPct > 0.15) {
+                        status = "交聯偏低";
+                        severity = "warning";
+                        warning = `[Warning] 交聯指數偏低(${crosslinkCI.toFixed(3)} < ${dynamicCI.ciMin.toFixed(3)})，泡孔結構可能不穩定`;
+                    } else {
+                        status = "交聯稍偏低";
+                        severity = "mild";
+                        warning = `[Mild] 交聯指數稍偏低(${crosslinkCI.toFixed(3)}，下限${dynamicCI.ciMin.toFixed(3)})，品質影響輕微`;
+                    }
                     const targetCI = dynamicCI.ciOptimalLow;
                     const targetDcpRatio = targetCI / (effectiveReaction / 100);
                     const targetEffectiveDCP = effectiveDCPNeed * targetDcpRatio;
                     const needAdd = (targetEffectiveDCP - effectiveDcp) * totalResin_kg * 1000;
-                    suggestion = `Recommended增加DCP約 ${Math.max(10, needAdd).toFixed(0)}g`;
+                    suggestion = `可考慮增加DCP約 ${Math.max(5, needAdd).toFixed(0)}g (CI→${targetCI.toFixed(3)})`;
                 }
                 // 合格但High (接近上限)
                 else if (crosslinkCI > dynamicCI.ciOptimalHigh) {
@@ -5515,25 +5578,21 @@ v7.5 (2026-02-04) - Parameter Calibration
                     const targetDcpRatio = targetCI / (effectiveReaction / 100);
                     const targetEffectiveDCP = effectiveDCPNeed * targetDcpRatio;
                     const canReduce = (effectiveDcp - targetEffectiveDCP) * totalResin_kg * 1000;
-                    suggestion = `交聯指數${crosslinkCI.toFixed(3)}合格但High(Range${dynamicCI.ciMin.toFixed(3)}~${dynamicCI.ciMax.toFixed(3)})，可考慮減少DCP約${Math.max(5, canReduce).toFixed(0)}g`;
+                    suggestion = canReduce > 15 ? `DCP用量偏高(Supply ${(dcpSupplyRatio*100).toFixed(0)}%)，可減少約${Math.max(5, canReduce).toFixed(0)}g，節省成本` : `交聯指數合格(${crosslinkCI.toFixed(3)})`;
                 }
                 // 合格但Low (接近下限)
                 else if (crosslinkCI < dynamicCI.ciOptimalLow) {
                     status = "合格-Low";
                     severity = "info";
                     warning = null;
-                    const targetCI = dynamicCI.ciOptimalLow;
-                    const targetDcpRatio = targetCI / (effectiveReaction / 100);
-                    const targetEffectiveDCP = effectiveDCPNeed * targetDcpRatio;
-                    const needAdd = (targetEffectiveDCP - effectiveDcp) * totalResin_kg * 1000;
-                    suggestion = `交聯指數${crosslinkCI.toFixed(3)}合格但Low(Range${dynamicCI.ciMin.toFixed(3)}~${dynamicCI.ciMax.toFixed(3)})，可考慮增加DCP約${Math.max(5, needAdd).toFixed(0)}g`;
+                    suggestion = `交聯指數合格但偏低(${crosslinkCI.toFixed(3)})，可考慮微調`;
                 }
                 // OptimalRange
                 else if (crosslinkCI >= dynamicCI.ciOptimalLow && crosslinkCI <= dynamicCI.ciOptimalHigh) {
                     status = "交聯良好";
                     severity = "good";
                     warning = null;
-                    suggestion = `交聯指數${crosslinkCI.toFixed(3)}，處於OptimalRange(${dynamicCI.ciOptimalLow.toFixed(3)}~${dynamicCI.ciOptimalHigh.toFixed(3)})`;
+                    suggestion = `交聯指數${crosslinkCI.toFixed(3)}，OptimalRange(${dynamicCI.ciOptimalLow.toFixed(3)}~${dynamicCI.ciOptimalHigh.toFixed(3)})`;
                 }
                 // 其他情況
                 else {
@@ -5708,29 +5767,75 @@ v7.5 (2026-02-04) - Parameter Calibration
                 }
             }
             
-            // AC/DCP平衡 - v8.0: 依發泡倍率動態調整門檻
-            // Conservative thresholds - flag early, let engineer decide
+            // AC/DCP平衡 - v8.0b: 連續迴歸曲線 (from 115 good products, Score>=92)
+            // ratio = 0.0112 × exp² - 0.0201 × exp + 6.98, RMSE=1.19
             const expX = predictedExpansion || 25;
-            let acDcp_severe, acDcp_warn, acDcp_optLow, acDcp_optHigh;
-            if (expX < 20) {
-                acDcp_severe = 7; acDcp_warn = 9; acDcp_optLow = 10; acDcp_optHigh = 16;
-            } else if (expX < 25) {
-                acDcp_severe = 8; acDcp_warn = 10; acDcp_optLow = 11; acDcp_optHigh = 18;
-            } else if (expX < 30) {
-                acDcp_severe = 9; acDcp_warn = 11; acDcp_optLow = 12; acDcp_optHigh = 20;
-            } else {
-                acDcp_severe = 10; acDcp_warn = 12; acDcp_optLow = 14; acDcp_optHigh = 22;
-            }
+            const acDcpOptimal = 0.0112 * expX * expX - 0.0201 * expX + 6.98;
+            const acDcpRMSE = 1.19;
+            const acDcp_severe = acDcpOptimal - 2.5 * acDcpRMSE;  // 嚴重偏低: <-2.5σ
+            const acDcp_warn = acDcpOptimal - 1.5 * acDcpRMSE;    // 偏低: <-1.5σ
+            const acDcp_optLow = acDcpOptimal - 0.8 * acDcpRMSE;  // Optimal低端
+            const acDcp_optHigh = acDcpOptimal + 1.5 * acDcpRMSE;  // Optimal高端
+            const acDcpDeviation = (acDcpRatio - acDcpOptimal) / acDcpRMSE; // σ deviation
             
             if (acDcpRatio < acDcp_severe) {
-                warnings.push(`[嚴重] AC/DCP比過低(${acDcpRatio.toFixed(1)} < ${acDcp_severe})，發泡嚴重Insufficient(${expX.toFixed(0)}X倍率)`);
-                suggestions.push(`Recommended增加AC至 ${(dcp_phr * acDcp_optLow).toFixed(1)} phr 以上`);
+                warnings.push(`[嚴重] AC/DCP比過低(${acDcpRatio.toFixed(1)})，${expX.toFixed(0)}X倍率最適值${acDcpOptimal.toFixed(1)}(${acDcpDeviation.toFixed(1)}σ)`);
+                suggestions.push(`Recommended增加AC至 ${(dcp_phr * acDcpOptimal).toFixed(1)} phr (AC/DCP→${acDcpOptimal.toFixed(1)})`);
             } else if (acDcpRatio < acDcp_warn) {
-                warnings.push(`[Warning] AC/DCP比偏低(${acDcpRatio.toFixed(1)})，${expX.toFixed(0)}X倍率建議>${acDcp_warn}`);
+                warnings.push(`[Warning] AC/DCP比偏低(${acDcpRatio.toFixed(1)})，${expX.toFixed(0)}X最適值${acDcpOptimal.toFixed(1)}(${acDcpDeviation.toFixed(1)}σ)`);
+            } else if (acDcpRatio < acDcp_optLow) {
+                warnings.push(`[Mild] AC/DCP比稍偏低(${acDcpRatio.toFixed(1)})，最適Range ${acDcp_optLow.toFixed(1)}~${acDcp_optHigh.toFixed(1)}@${expX.toFixed(0)}X`);
             } else if (acDcpRatio > 30) {
                 warnings.push("[Warning] AC/DCP比Too High(>30)，交聯可能Insufficient");
             } else if (acDcpRatio >= acDcp_optLow && acDcpRatio <= acDcp_optHigh) {
-                suggestions.push(`AC/DCP比值${acDcpRatio.toFixed(1)}在OptimalRange(${acDcp_optLow}-${acDcp_optHigh}@${expX.toFixed(0)}X)`);
+                suggestions.push(`AC/DCP比值${acDcpRatio.toFixed(1)}在OptimalRange(${acDcp_optLow.toFixed(1)}~${acDcp_optHigh.toFixed(1)}@${expX.toFixed(0)}X, ${acDcpDeviation > 0 ? '+' : ''}${acDcpDeviation.toFixed(1)}σ)`);
+            } else if (acDcpRatio > acDcp_optHigh) {
+                suggestions.push(`AC/DCP比值${acDcpRatio.toFixed(1)}偏高(最適上限${acDcp_optHigh.toFixed(1)}@${expX.toFixed(0)}X)，可考慮降低AC或增加DCP`);
+            }
+            
+            // Store curve data for display (will be attached to currentCalc after init)
+            const _acDcpCurveData = { optimal: acDcpOptimal, rmse: acDcpRMSE, severe: acDcp_severe, warn: acDcp_warn, optLow: acDcp_optLow, optHigh: acDcp_optHigh, deviation: acDcpDeviation, actual: acDcpRatio, exp: expX };
+            
+            // v8.0b: 料尾效應量化
+            // 料尾 = 同配方同顏色，經密煉混練但尚未發泡的材料
+            // 密煉出料溫度 ~125-128°C，DCP半衰期在此溫度下>數小時
+            // → 料尾中 DCP/AC 幾乎完整保留（反應率<5%）
+            // → 料尾本質上是「已分散但未反應的配方」
+            // 
+            // 正面效應：
+            //   1. DCP/AC已充分分散在樹脂基質中，均勻性極佳
+            //   2. 多次混煉 → 分散度更高 → 品質穩定性更好
+            // 
+            // 負面效應（累積老化）：
+            //   1. 每次混煉都經歷 120-128°C 高溫剪切
+            //   2. BHT抗氧劑在每次混煉中部分消耗
+            //   3. DCP在120°C下有微量分解（~2-5%/次）→ 多代累積
+            //   4. EVA/LDPE反覆高溫剪切 → 分子量可能輕微降解
+            let _tailAnalysisData = null;
+            if (tailRatio > 0) {
+                const r = tailRatio / (tailRatio + 100);
+                const avgMixCycles = 1 / (1 - r);
+                const dcpLossPerCycle = 0.025;
+                const cumulativeDcpLoss = 1 - Math.pow(1 - dcpLossPerCycle, avgMixCycles);
+                const bhtLossPerCycle = 0.07;
+                const cumulativeBhtLoss = 1 - Math.pow(1 - bhtLossPerCycle, avgMixCycles);
+                
+                if (tailRatio > 60) {
+                    warnings.push(`[Mild] 料尾佔比${tailRatio.toFixed(0)}%(avg混煉${avgMixCycles.toFixed(1)}次)，DCP累積損失~${(cumulativeDcpLoss*100).toFixed(1)}%，BHT累積消耗~${(cumulativeBhtLoss*100).toFixed(0)}%`);
+                    suggestions.push(`料尾佔比偏高，累積老化效應需注意。若連續生產≥5批建議換新料尾`);
+                } else if (tailRatio > 30) {
+                    suggestions.push(`料尾${tailRatio.toFixed(0)}%(avg${avgMixCycles.toFixed(1)}次混煉)，分散均勻性佳，DCP微量損失${(cumulativeDcpLoss*100).toFixed(1)}%可忽略`);
+                } else if (tailRatio > 5) {
+                    suggestions.push(`料尾${tailRatio.toFixed(0)}%，分散穩定化效果良好`);
+                }
+                
+                _tailAnalysisData = {
+                    tailRatio,
+                    avgMixCycles,
+                    cumulativeDcpLoss,
+                    cumulativeBhtLoss,
+                    steadyStateNewMaterial: (1 - r) * 100
+                };
             }
             
             // Inorganic Filler警示 (分離計算)
@@ -5846,6 +5951,18 @@ v7.5 (2026-02-04) - Parameter Calibration
                 warnings.push(balanceWarning);
             } else if (balanceWarning && (balanceWarning.includes("良好") || balanceWarning.includes("good"))) {
                 suggestions.push(balanceWarning);
+            }
+            
+            // v8.0b: Temp2 margin check — AC分解溫度與二段溫度的安全裕度
+            if (temp2 > 0 && znoEffect && unicellEffect) {
+                const acDecomp = 203 - (znoEffect.tempReduction || 0) - (unicellEffect.tempReduction || 0);
+                const temp2Margin = temp2 - acDecomp;
+                if (temp2Margin < 5) {
+                    warnings.push(`[Warning] 二段溫度(${temp2}°C)與AC有效分解溫度(${acDecomp.toFixed(0)}°C)裕度僅${temp2Margin.toFixed(0)}°C，AC可能未完全分解`);
+                    suggestions.push(`建議提高二段溫度至${(acDecomp + 10).toFixed(0)}°C以上，或增加ZnO/Urea降低AC分解溫度`);
+                } else if (temp2Margin < 15) {
+                    suggestions.push(`二段溫度裕度${temp2Margin.toFixed(0)}°C (${temp2}°C - AC分解${acDecomp.toFixed(0)}°C)，建議維持≥15°C`);
+                }
             }
             
             // ==================== v7.4: 智能警示過濾 ====================
@@ -6013,6 +6130,10 @@ v7.5 (2026-02-04) - Parameter Calibration
                 suggestions
             };
             
+            // Attach deferred data computed before currentCalc init
+            currentCalc.acDcpCurve = _acDcpCurveData;
+            if (_tailAnalysisData) currentCalc.tailAnalysis = _tailAnalysisData;
+            
             // v8.0: Calculate qualityScore and store in currentCalc
             // This ensures batch functions can read it directly
             let qualityScore = 100;
@@ -6020,6 +6141,7 @@ v7.5 (2026-02-04) - Parameter Calibration
                 currentCalc.warnings.forEach(w => {
                     if (w.includes('嚴重')) qualityScore -= 15;
                     else if (w.includes('[Warning]')) qualityScore -= 8;
+                    else if (w.includes('[Mild]')) qualityScore -= 4;
                     else qualityScore -= 3;
                 });
             }
@@ -6224,7 +6346,7 @@ v7.5 (2026-02-04) - Parameter Calibration
                 <tr style="background:rgba(60,80,60,0.15);"><td colspan="5" style="color:#8ca; font-weight:bold; padding-top:8px;">Formula Summary</td></tr>
                 <tr style="background:rgba(60,80,60,0.1);"><td><strong>Total Formula</strong></td><td><strong>${totalFormulaPhr.toFixed(2)}</strong></td><td style="color:#ad8;"><strong>100.00</strong></td><td style="color:#8cf;"><strong>${isLabMode ? totalFormulaWeightG.toFixed(2) + ' g' : (totalFormulaWeightG/1000).toFixed(2) + ' kg'}</strong></td><td>Resin ${resinWtPct}% + Additives ${(100-parseFloat(resinWtPct)).toFixed(2)}%</td></tr>
                 
-                <tr style="background:rgba(100,90,70,0.12);"><td><strong>Mixing</strong></td><td>-</td><td>-</td><td>-</td><td>${rotorSpeed}rpm/${mixTime}min, Dosage ${dosageTemp}°C → Discharge ${dischargeTemp.toFixed(0)}°C ${isManualDischargeTemp ? '[Manual]' : '[Calc]'} (Est.actual ~125-128°C), Dispersion ${(dcpEval.dispersionIndex*100).toFixed(0)}%</td></tr>
+                <tr style="background:rgba(100,90,70,0.12);"><td><strong>Mixing</strong></td><td>-</td><td>-</td><td>-</td><td>${rotorSpeed}rpm/${mixTime}min, Dosage ${dosageTemp}°C → Discharge ${dischargeTemp.toFixed(0)}°C ${isManualDischargeTemp ? '[Manual]' : '[Calc]'} (Est.actual ~125-128°C), Dispersion ${(dcpEval.dispersionIndex*100).toFixed(0)}%${tailRatio > 0 ? `, Tail ${tailRatio.toFixed(0)}% (avg ${(1/(1-tailRatio/(tailRatio+100))).toFixed(1)}x mixed)` : ''}</td></tr>
                 <tr style="background:rgba(140,100,70,0.12);"><td><strong>DCP Loss (Mixing)</strong></td><td>${(mixingDCPLoss.loss * 100).toFixed(1)}%</td><td>-</td><td>-</td><td>Exposure ${mixingDCPLoss.exposureTime.toFixed(1)}min, Avg ${mixingDCPLoss.avgTemp.toFixed(0)}°C, Remaining ${dcpEval.dcpAfterMixing.toFixed(3)}phr</td></tr>
                 <tr style="background:rgba(140,120,70,0.12);"><td><strong>AC Loss (Mixing)</strong></td><td>${(mixingACLoss.loss * 100).toFixed(1)}%</td><td>-</td><td>-</td><td>AC Eff. Decomp. Temp ${mixingACLoss.acEffectiveDecompTemp.toFixed(0)}°C (ACF06 203°C - ZnO ${znoEffect.tempReduction.toFixed(0)}°C - Urea ${unicellEffect.tempReduction.toFixed(0)}°C)</td></tr>
                 <tr style="background:rgba(80,100,80,0.15);"><td><strong>Effective AC</strong></td><td><strong>${effectiveAC.toFixed(2)}</strong></td><td style="color:#ad8;"><strong>${phrToWtPct(effectiveAC)}</strong></td><td style="color:#8cf;"><strong>${isLabMode ? phrToG(effectiveAC) + ' g' : phrToKg(effectiveAC) + ' kg'}</strong></td><td>After all effects, Foaming Temp vs AC Decomp Temp: ${temp1}°C vs ${acDecomp1.acEffectiveDecompTemp.toFixed(0)}°C (${acDecomp1.tempAboveDecomp >= 0 ? '+' : ''}${acDecomp1.tempAboveDecomp.toFixed(0)}°C)</td></tr>
@@ -6402,8 +6524,9 @@ v7.5 (2026-02-04) - Parameter Calibration
                         </div>
                         <div style="background: rgba(100,120,140,0.3); padding: 10px; border-radius: 8px; text-align: center;">
                             <div style="font-size: 10px; color: #8aa;">Crosslink CI</div>
-                            <div style="font-size: 18px; font-weight: 700; color: ${dcpEval.crosslinkCI >= dcpEval.dynamicCI.ciOptimalLow && dcpEval.crosslinkCI <= dcpEval.dynamicCI.ciOptimalHigh ? '#8c8' : dcpEval.crosslinkCI >= dcpEval.dynamicCI.ciMin && dcpEval.crosslinkCI <= dcpEval.dynamicCI.ciMax ? '#cc9' : '#c77'};">${dcpEval.crosslinkCI.toFixed(3)}</div>
+                            <div style="font-size: 18px; font-weight: 700; color: ${dcpEval.crosslinkCI >= dcpEval.dynamicCI.ciOptimalLow && dcpEval.crosslinkCI <= dcpEval.dynamicCI.ciOptimalHigh ? '#30D158' : dcpEval.crosslinkCI >= dcpEval.dynamicCI.ciMin && dcpEval.crosslinkCI <= dcpEval.dynamicCI.ciMax ? '#FFD60A' : '#FF6B6B'};">${dcpEval.crosslinkCI.toFixed(3)}</div>
                             <div style="font-size: 9px; color: #999;">Range: ${dcpEval.dynamicCI.ciMin.toFixed(3)}~${dcpEval.dynamicCI.ciMax.toFixed(3)}</div>
+                            <div style="margin-top:4px;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;color:${getCITierDisplay(dcpEval.status).color};background:${getCITierDisplay(dcpEval.status).bg};">${getCITierDisplay(dcpEval.status).icon} ${getCITierDisplay(dcpEval.status).label}</span></div>
                         </div>
                     </div>
                     
@@ -6468,6 +6591,58 @@ v7.5 (2026-02-04) - Parameter Calibration
                         <div style="margin-top: 5px; text-align: center; color: #aaa;">
                             CI Range: <strong style="color: #8cf;">${dcpEval.dynamicCI.ciMin.toFixed(3)}</strong> ~ <strong style="color: #fc8;">${dcpEval.dynamicCI.ciMax.toFixed(3)}</strong>
                             (Optimal: ${dcpEval.dynamicCI.ciOptimalLow.toFixed(3)} ~ ${dcpEval.dynamicCI.ciOptimalHigh.toFixed(3)})
+                            ${dcpEval.dynamicCI.poeFactor < 1.0 ? `<span style="color:#BF5AF2; font-size:10px;"> POE×${dcpEval.dynamicCI.poeFactor.toFixed(3)}</span>` : ''}
+                        </div>
+                        <!-- v8.0b: AC/DCP Optimal Curve -->
+                        <div style="margin-top:8px; padding:8px; background:rgba(0,0,0,0.2); border-radius:6px;">
+                            <div style="font-size:10px; color:#86868B; margin-bottom:4px;">AC/DCP vs Expansion — Optimal Curve (115 products)</div>
+                            ${(() => {
+                                const exp = dcpEval.estimatedExpansion || 20;
+                                const ratio = acDcpRatio;
+                                const optCurve = x => 0.0112*x*x - 0.0201*x + 6.98;
+                                const optRatio = optCurve(exp);
+                                const rmse = 1.19;
+                                // SVG mini chart
+                                const w = 280, h = 60, pad = 25;
+                                const xMin = 14, xMax = 36;
+                                const yMin = 6, yMax = 24;
+                                const sx = x => pad + (x - xMin) / (xMax - xMin) * (w - pad*2);
+                                const sy = y => h - pad/2 - (y - yMin) / (yMax - yMin) * (h - pad);
+                                // Curve path
+                                let curvePath = '';
+                                for (let x = xMin; x <= xMax; x += 0.5) {
+                                    const y = optCurve(x);
+                                    curvePath += (x === xMin ? 'M' : 'L') + sx(x).toFixed(1) + ',' + sy(y).toFixed(1);
+                                }
+                                // CI band
+                                let bandTop = '', bandBot = '';
+                                for (let x = xMin; x <= xMax; x += 0.5) {
+                                    const y = optCurve(x);
+                                    bandTop += (x === xMin ? 'M' : 'L') + sx(x).toFixed(1) + ',' + sy(y + rmse*1.96).toFixed(1);
+                                    bandBot += (x === xMin ? 'M' : 'L') + sx(x).toFixed(1) + ',' + sy(y - rmse*1.96).toFixed(1);
+                                }
+                                const px = sx(Math.min(Math.max(exp, xMin), xMax));
+                                const py = sy(Math.min(Math.max(ratio, yMin), yMax));
+                                const optPy = sy(optRatio);
+                                const diff = ratio - optRatio;
+                                const diffColor = Math.abs(diff) < rmse ? '#30D158' : Math.abs(diff) < rmse*1.96 ? '#FFD60A' : '#FF453A';
+                                return `<svg viewBox="0 0 ${w} ${h}" style="width:100%; max-width:${w}px; height:${h}px;">
+                                    <path d="${bandTop} ${bandBot.split('L').reverse().join('L').replace('L','L')}" fill="rgba(100,210,255,0.08)" stroke="none"/>
+                                    <path d="${curvePath}" fill="none" stroke="#64D2FF" stroke-width="1.5" stroke-dasharray="4,2"/>
+                                    <line x1="${sx(xMin)}" y1="${sy(yMin)}" x2="${sx(xMax)}" y2="${sy(yMin)}" stroke="#333" stroke-width="0.5"/>
+                                    <line x1="${sx(xMin)}" y1="${sy(yMin)}" x2="${sx(xMin)}" y2="${sy(yMax)}" stroke="#333" stroke-width="0.5"/>
+                                    <text x="${sx(xMin)-2}" y="${sy(yMin)+10}" font-size="7" fill="#666" text-anchor="end">${yMin}</text>
+                                    <text x="${sx(xMin)-2}" y="${sy(yMax)+3}" font-size="7" fill="#666" text-anchor="end">${yMax}</text>
+                                    <text x="${sx(xMin)}" y="${sy(yMin)+10}" font-size="7" fill="#666">${xMin}X</text>
+                                    <text x="${sx(xMax)}" y="${sy(yMin)+10}" font-size="7" fill="#666" text-anchor="end">${xMax}X</text>
+                                    <circle cx="${px}" cy="${py}" r="3.5" fill="${diffColor}" stroke="white" stroke-width="0.8"/>
+                                    <text x="${px+6}" y="${py+3}" font-size="8" fill="${diffColor}">${ratio.toFixed(1)} (${diff>0?'+':''}${diff.toFixed(1)})</text>
+                                </svg>
+                                <div style="font-size:9px; color:#86868B; display:flex; justify-content:space-between;">
+                                    <span>Optimal@${exp.toFixed(0)}X = ${optRatio.toFixed(1)}</span>
+                                    <span style="color:${diffColor};">Yours = ${ratio.toFixed(1)} (${diff > 0 ? '偏高' : diff < 0 ? '偏低' : '最適'})</span>
+                                </div>`;
+                            })()}
                         </div>
                     </div>
                 </div>
@@ -6559,8 +6734,18 @@ v7.5 (2026-02-04) - Parameter Calibration
             if (finalWarnings.length > 0) {
                 warningsHTML = `
                     <div class="input-section" style="background: rgba(140, 80, 80, 0.2); border-color: #8a5050;">
-                        <div class="section-title" style="color: #c99;">! WARNINGS</div>
-                        ${finalWarnings.map(w => `<div style="padding: 8px; margin: 5px 0; background: rgba(140, 80, 80, 0.15); border-left: 3px solid #8a5050; border-radius: 5px; font-size: 13px; color: #dcc;">${w}</div>`).join('')}
+                        <div class="section-title" style="color: #c99;">! WARNINGS (${finalWarnings.length})</div>
+                        ${finalWarnings.map(w => {
+                            const isCritical = w.includes('[嚴重]');
+                            const isWarning = w.includes('[Warning]');
+                            const isMild = w.includes('[Mild]');
+                            const isInfo = w.includes('[Info]');
+                            const borderColor = isCritical ? '#FF453A' : isWarning ? '#FF6B6B' : isMild ? '#FFB340' : isInfo ? '#64D2FF' : '#8a5050';
+                            const bgColor = isCritical ? 'rgba(255,69,58,0.15)' : isWarning ? 'rgba(255,107,107,0.12)' : isMild ? 'rgba(255,179,64,0.10)' : isInfo ? 'rgba(100,210,255,0.08)' : 'rgba(140,80,80,0.15)';
+                            const tag = isCritical ? '<span style="color:#FF453A;font-weight:700;font-size:11px;">CRITICAL</span> ' : isWarning ? '<span style="color:#FF6B6B;font-weight:600;font-size:11px;">WARNING</span> ' : isMild ? '<span style="color:#FFB340;font-weight:600;font-size:11px;">MILD</span> ' : isInfo ? '<span style="color:#64D2FF;font-weight:600;font-size:11px;">INFO</span> ' : '';
+                            const cleanMsg = w.replace(/\[(嚴重|Warning|Mild|Info)\]\s*/g, '');
+                            return `<div style="padding:8px 10px; margin:5px 0; background:${bgColor}; border-left:3px solid ${borderColor}; border-radius:5px; font-size:13px; color:#dcc; line-height:1.4;">${tag}${cleanMsg}</div>`;
+                        }).join('')}
                     </div>
                 `;
             }
@@ -6586,12 +6771,26 @@ v7.5 (2026-02-04) - Parameter Calibration
                 predictionsSection.insertAdjacentHTML('afterend', balanceHTML + warningsHTML + suggestionsHTML);
             }
             
+            // === v8.0b: Similar Formula Search ===
+            const similarHTML = buildSimilarFormulasHTML(currentCalc);
+            // === v8.0b: DCP Cost Optimization ===
+            const costHTML = buildCostOptHTML(currentCalc);
+            
+            // Insert after suggestions
+            const allSections = resultsDiv.querySelectorAll('.input-section');
+            const lastSection = allSections[allSections.length - 1];
+            if (lastSection) {
+                lastSection.insertAdjacentHTML('afterend', costHTML + similarHTML);
+            }
+            
             document.getElementById('results').style.display = 'block';
             document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
             
             // Show Production Print button
             const btnProdPrint = document.getElementById('btnProductionPrint');
             if (btnProdPrint) btnProdPrint.style.display = (currentMode === 'production') ? 'inline-block' : 'none';
+            const btnPDF = document.getElementById('btnExportPDF');
+            if (btnPDF) btnPDF.style.display = 'inline-block';
             
             // v8.0: 顯示對應模式的 Convert 按鈕
             const convertProdBtn = document.getElementById('convertToProductionBtn');
@@ -6602,6 +6801,85 @@ v7.5 (2026-02-04) - Parameter Calibration
         } catch (error) {
             alert('計算錯誤: ' + error.message);
         }
+    }
+    
+    // === v8.0b: Similar Formula Search ===
+    function buildSimilarFormulasHTML(calc) {
+        const history = getCurrentHistory();
+        if (!history || history.length < 2) return '';
+        
+        const current = {
+            evaRatio: (calc.eva16_phr + calc.eva25_phr) / ((calc.eva16_phr + calc.eva25_phr + calc.ldpe_phr + calc.poe_phr) || 1),
+            acPhr: calc.ac_phr || 0,
+            dcpPhr: calc.dcp_phr || 0,
+            expansion: calc.dcpEval?.estimatedExpansion || 0,
+            poeRatio: calc.poe_phr / ((calc.eva16_phr + calc.eva25_phr + calc.ldpe_phr + calc.poe_phr) || 1),
+            hasFR: (calc.flameRetardant_phr || 0) > 0
+        };
+        
+        const scored = history.map((r, idx) => {
+            const totalResin = (r.raw_eva16_kg||0) + (r.raw_eva25_kg||0) + (r.raw_ldpe24_kg||0) + (r.raw_ldpe40_kg||0) + (r.raw_poe_kg||0);
+            if (totalResin === 0) return { idx, sim: 0 };
+            const rEvaRatio = ((r.raw_eva16_kg||0) + (r.raw_eva25_kg||0)) / totalResin;
+            const rPoeRatio = (r.raw_poe_kg||0) / totalResin;
+            const rExp = r.dcpEval?.estimatedExpansion || 0;
+            const rAc = r.ac_phr || 0;
+            const rDcp = r.dcp_phr || 0;
+            const rFR = (r.flameRetardant_phr || 0) > 0;
+            
+            const d = Math.sqrt(
+                Math.pow((current.evaRatio - rEvaRatio) * 3, 2) +
+                Math.pow((current.poeRatio - rPoeRatio) * 4, 2) +
+                Math.pow((current.expansion - rExp) / 10, 2) +
+                Math.pow((current.acPhr - rAc) / 5, 2) +
+                Math.pow((current.dcpPhr - rDcp) / 2, 2) +
+                (current.hasFR !== rFR ? 1 : 0)
+            );
+            return { idx, sim: 1 / (1 + d), r };
+        }).filter(s => s.sim > 0.3).sort((a, b) => b.sim - a.sim).slice(0, 3);
+        
+        if (scored.length === 0) return '';
+        
+        return `
+            <div class="input-section" style="background: rgba(80, 100, 140, 0.2); border-color: #6688aa; margin-top:8px;">
+                <div class="section-title" style="color: #8ab;">SIMILAR FORMULAS</div>
+                ${scored.map(s => {
+                    const r = s.r;
+                    const sc = r.qualityScore || '-';
+                    const ci = r.dcpEval?.crosslinkCI?.toFixed(3) || '-';
+                    const scoreColor = sc >= 92 ? '#30D158' : sc >= 80 ? '#FF9F0A' : '#FF453A';
+                    return `<div style="padding:6px 8px; margin:4px 0; background:rgba(80,100,140,0.15); border-radius:5px; font-size:12px; color:#bcd; display:flex; justify-content:space-between; align-items:center;">
+                        <span><strong>${r.productModel||''}</strong> ${r.batchId||''}</span>
+                        <span>CI=${ci} Score=<span style="color:${scoreColor}">${sc}</span> (${(s.sim*100).toFixed(0)}% match)</span>
+                    </div>`;
+                }).join('')}
+            </div>
+        `;
+    }
+    
+    // === v8.0b: DCP Cost Optimization ===
+    function buildCostOptHTML(calc) {
+        const dsr = calc.dcpEval?.dcpSupplyRatio || 0;
+        const ci = calc.dcpEval?.crosslinkCI || 0;
+        const ciOpt = calc.dcpEval?.dynamicCI?.ciOptimalHigh || 0;
+        const totalResinKg = calc.totalWeight || 0;
+        
+        if (dsr < 1.15 || ci <= ciOpt) return '';
+        
+        const excessRatio = (dsr - 1.05) / dsr;
+        const dcpKg = calc.dcp_phr * totalResinKg / 100;
+        const savingG = dcpKg * excessRatio * 1000;
+        
+        if (savingG < 10) return '';
+        
+        return `
+            <div class="input-section" style="background: rgba(100, 140, 80, 0.2); border-color: #8a6; margin-top:8px;">
+                <div class="section-title" style="color: #ac8;">DCP COST OPTIMIZATION</div>
+                <div style="padding:8px; font-size:12px; color:#cdc;">
+                    DCP供需比 ${(dsr*100).toFixed(0)}%，超過最適值。可考慮減少 DCP 約 <strong style="color:#FFD60A;">${savingG.toFixed(0)}g</strong>/批次 (Supply→105%)，CI 仍在合格範圍內。
+                </div>
+            </div>
+        `;
     }
     
     // ==================== 歷史記錄功能 ====================
@@ -6729,6 +7007,7 @@ v7.5 (2026-02-04) - Parameter Calibration
             warnings.forEach(w => {
                 if (w.includes('嚴重')) qualityScore -= 15;
                 else if (w.includes('[Warning]')) qualityScore -= 8;
+                    else if (w.includes('[Mild]')) qualityScore -= 4;
                 else qualityScore -= 3;  // suggestions/info level
             });
         }
@@ -7025,6 +7304,87 @@ v7.5 (2026-02-04) - Parameter Calibration
         printWindow.document.close();
     }
     
+    // v8.0b: PDF Report Export
+    function exportAnalysisPDF() {
+        if (!currentCalc) { alert('Please run Calculate first.'); return; }
+        const c = currentCalc;
+        const model = document.getElementById('productModel').value || 'N/A';
+        const batch = document.getElementById('batchId').value || '';
+        const now = new Date().toISOString().slice(0,10);
+        const score = c.qualityScore || 0;
+        const scoreColor = score >= 92 ? '#30D158' : score >= 80 ? '#FF9F0A' : '#FF453A';
+        const tier = getCITierDisplay(c.dcpEval?.status || '');
+        const ci = c.dcpEval?.crosslinkCI?.toFixed(3) || '-';
+        const exp = c.dcpEval?.estimatedExpansion?.toFixed(1) || '-';
+        const density = c.predictedDensity?.toFixed(4) || '-';
+        const acDcp = c.acDcpCurve || {};
+        
+        const w = window.open('', '_blank');
+        w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Formula Analysis Report — ${model}</title>
+        <style>
+            @page { size: A4; margin: 20mm; }
+            body { font-family: -apple-system, Arial, sans-serif; color: #222; font-size: 11px; line-height: 1.5; }
+            h1 { font-size: 18px; color: #1B365D; border-bottom: 2px solid #1B365D; padding-bottom: 6px; }
+            h2 { font-size: 13px; color: #2E5A88; margin-top: 16px; }
+            .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0; }
+            .card { background: #f5f5f5; padding: 8px; border-radius: 4px; text-align: center; }
+            .card .label { font-size: 9px; color: #888; }
+            .card .value { font-size: 16px; font-weight: 700; }
+            table { width: 100%; border-collapse: collapse; font-size: 10px; margin: 6px 0; }
+            th, td { padding: 4px 6px; border: 1px solid #ddd; }
+            th { background: #eee; font-weight: 600; }
+            .warn { padding: 4px 6px; margin: 3px 0; border-left: 3px solid #c44; background: #fff5f5; font-size: 10px; }
+            .sugg { padding: 4px 6px; margin: 3px 0; border-left: 3px solid #4a7; background: #f5fff5; font-size: 10px; }
+            .footer { margin-top: 20px; padding-top: 8px; border-top: 1px solid #ddd; font-size: 9px; color: #888; text-align: center; }
+            @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+        </style></head><body>
+        <h1>Formula Analysis Report</h1>
+        <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+            <div><strong>Model:</strong> ${model} &nbsp; <strong>Batch:</strong> ${batch}</div>
+            <div><strong>Date:</strong> ${now} &nbsp; <strong>Version:</strong> v8.0b</div>
+        </div>
+        
+        <div class="grid">
+            <div class="card"><div class="label">Quality Score</div><div class="value" style="color:${scoreColor};">${score}</div></div>
+            <div class="card"><div class="label">Crosslink CI</div><div class="value">${ci}</div><div style="font-size:9px;color:${tier.color};">${tier.icon} ${tier.label}</div></div>
+            <div class="card"><div class="label">Est. Expansion</div><div class="value">${exp}X</div></div>
+            <div class="card"><div class="label">Pred. Density</div><div class="value">${density}</div></div>
+        </div>
+        
+        <h2>Formula Composition</h2>
+        <table>
+            <tr><th>Component</th><th>Amount</th><th>phr</th></tr>
+            <tr><td>EVA (VA${c.eva16va}%)</td><td>${c.raw_eva16_kg?.toFixed(2)||0} kg</td><td>${c.eva16_phr?.toFixed(2)||0}</td></tr>
+            <tr><td>EVA (VA${c.eva25va}%)</td><td>${c.raw_eva25_kg?.toFixed(2)||0} kg</td><td>${c.eva25_phr?.toFixed(2)||0}</td></tr>
+            <tr><td>LDPE</td><td>${((c.raw_ldpe24_kg||0)+(c.raw_ldpe40_kg||0)).toFixed(2)} kg</td><td>${c.ldpe_phr?.toFixed(2)||0}</td></tr>
+            ${c.poe_phr > 0 ? `<tr><td>POE (C0570D)</td><td>${c.raw_poe_kg?.toFixed(2)||0} kg</td><td>${c.poe_phr?.toFixed(2)||0}</td></tr>` : ''}
+            <tr><td>AC (PE+EVA)</td><td>${((c.raw_acpe_kg||0)+(c.raw_aceva_kg||0)).toFixed(2)} kg</td><td>${c.ac_phr?.toFixed(2)||0}</td></tr>
+            <tr><td>DCP</td><td>${(c.dcp_phr*(c.totalWeight||0)/100*1000).toFixed(0)} g</td><td>${c.dcp_phr?.toFixed(3)||0}</td></tr>
+            <tr><td>ZnO</td><td>${(c.zno_phr*(c.totalWeight||0)/100*1000).toFixed(0)} g</td><td>${c.zno_phr?.toFixed(3)||0}</td></tr>
+            <tr><td>Urea</td><td>${(c.urea_phr*(c.totalWeight||0)/100*1000).toFixed(0)} g</td><td>${c.urea_phr?.toFixed(3)||0}</td></tr>
+        </table>
+        
+        <h2>Process Parameters</h2>
+        <table>
+            <tr><th>Parameter</th><th>Value</th></tr>
+            <tr><td>Stage 1</td><td>${c.temp1}°C / ${c.time1} min</td></tr>
+            <tr><td>Stage 2</td><td>${c.temp2}°C / ${c.time2} min</td></tr>
+            <tr><td>Discharge Temp</td><td>${c.dischargeTemp?.toFixed(0)||'-'}°C (Est. actual ~125-128°C)</td></tr>
+            <tr><td>DCP Supply Ratio</td><td>${(c.dcpEval?.dcpSupplyRatio*100)?.toFixed(0)||'-'}%</td></tr>
+            <tr><td>AC/DCP Ratio</td><td>${acDcp.actual?.toFixed(1)||'-'} (Optimal: ${acDcp.optimal?.toFixed(1)||'-'} @${acDcp.exp?.toFixed(0)||'-'}X, ${acDcp.deviation?.toFixed(1)||'0'}σ)</td></tr>
+            <tr><td>Dispersion Index</td><td>${(c.dcpEval?.dispersionIndex*100)?.toFixed(0)||'-'}%</td></tr>
+            ${c.tailAnalysis ? `<tr><td>Tail Material</td><td>${c.tailAnalysis.tailRatio.toFixed(0)}% (avg ${c.tailAnalysis.avgMixCycles.toFixed(1)}x mixed, DCP loss ~${(c.tailAnalysis.cumulativeDcpLoss*100).toFixed(1)}%)</td></tr>` : ''}
+        </table>
+        
+        ${(c.warnings||[]).length > 0 ? `<h2>Warnings</h2>${(c.warnings||[]).map(w => '<div class="warn">'+w+'</div>').join('')}` : ''}
+        ${(c.suggestions||[]).length > 0 ? `<h2>Suggestions</h2>${(c.suggestions||[]).map(s => '<div class="sugg">'+s+'</div>').join('')}` : ''}
+        
+        <div class="footer">Polymer Foaming Process Predictor v8.0b — Generated ${new Date().toLocaleString()}</div>
+        </body></html>`);
+        w.document.close();
+        setTimeout(() => w.print(), 500);
+    }
+    
     function saveToHistory() {
         if (!isAuthenticated) {
             alert('請先登入！');
@@ -7040,6 +7400,7 @@ v7.5 (2026-02-04) - Parameter Calibration
             currentCalc.warnings.forEach(w => {
                 if (w.includes('嚴重')) qualityScore -= 15;
                 else if (w.includes('[Warning]')) qualityScore -= 8;
+                    else if (w.includes('[Mild]')) qualityScore -= 4;
                 else qualityScore -= 3;
             });
         }
@@ -9077,6 +9438,56 @@ overlay.onclick = () => {
     });
 </script>
 
+<!-- ==================== Formula Design Wizard ==================== -->
+<div id="formulaWizardModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.92); z-index:20000; overflow-y:auto;">
+    <div style="position:sticky; top:0; z-index:1; background:rgba(20,20,28,0.95); border-bottom:1px solid rgba(255,255,255,0.06); padding:14px 20px; display:flex; justify-content:space-between; align-items:center; backdrop-filter:blur(20px);">
+        <h2 style="color:#BF5AF2; margin:0; font-size:20px; font-weight:700; letter-spacing:-0.5px;">Formula Design Wizard</h2>
+        <button onclick="document.getElementById('formulaWizardModal').style.display='none'" style="background:rgba(255,255,255,0.1); color:#F5F5F7; border:none; padding:6px 12px; border-radius:8px; cursor:pointer; font-size:13px;">✕ Close</button>
+    </div>
+    <div style="max-width:720px; margin:12px auto; padding:0 20px 40px;">
+        <!-- Step 1: Target -->
+        <div style="background:rgba(30,30,38,0.95); border:1px solid rgba(191,90,242,0.2); border-radius:12px; padding:20px; margin-bottom:16px;">
+            <div style="font-size:14px; font-weight:600; color:#BF5AF2; margin-bottom:14px;">Step 1: Define Target</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <div>
+                    <label style="color:#86868B; font-size:11px; display:block; margin-bottom:4px;">Target Expansion (X)</label>
+                    <input type="number" id="wizExpansion" value="25" min="10" max="45" step="1" style="width:100%; padding:8px 10px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; color:#F5F5F7; font-size:14px;">
+                </div>
+                <div>
+                    <label style="color:#86868B; font-size:11px; display:block; margin-bottom:4px;">Resin Type</label>
+                    <select id="wizResinType" style="width:100%; padding:8px 10px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; color:#F5F5F7; font-size:14px;">
+                        <option value="eva_ldpe">EVA + LDPE (Standard)</option>
+                        <option value="eva_only">EVA Only</option>
+                        <option value="ldpe_only">LDPE Dominant</option>
+                        <option value="poe_blend">EVA + POE (RE-series)</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="color:#86868B; font-size:11px; display:block; margin-bottom:4px;">Total Resin (kg)</label>
+                    <input type="number" id="wizTotalResin" value="20" min="0.1" max="60" step="0.5" style="width:100%; padding:8px 10px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; color:#F5F5F7; font-size:14px;">
+                </div>
+                <div>
+                    <label style="color:#86868B; font-size:11px; display:block; margin-bottom:4px;">Flame Retardant</label>
+                    <select id="wizFR" style="width:100%; padding:8px 10px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; color:#F5F5F7; font-size:14px;">
+                        <option value="none">None</option>
+                        <option value="redp">Red Phosphorus</option>
+                        <option value="brsb">Br + Sb₂O₃</option>
+                        <option value="ath">ATH</option>
+                    </select>
+                </div>
+                <div style="grid-column: 1 / -1;">
+                    <label style="color:#86868B; font-size:11px; display:block; margin-bottom:4px;">Lab Scale — 輸入目標總重(g) 自動換算小量配方，留空=Production模式</label>
+                    <input type="number" id="wizLabScale" placeholder="e.g. 200 (g)" min="50" max="5000" step="10" style="width:100%; padding:8px 10px; background:rgba(255,255,255,0.06); border:1px solid rgba(191,90,242,0.2); border-radius:6px; color:#BF5AF2; font-size:14px;">
+                </div>
+            </div>
+            <button onclick="runFormulaWizard()" style="margin-top:16px; width:100%; padding:12px; background:rgba(191,90,242,0.25); color:#BF5AF2; border:1px solid rgba(191,90,242,0.4); border-radius:8px; cursor:pointer; font-weight:700; font-size:14px;">Generate Formulas</button>
+        </div>
+        
+        <!-- Results -->
+        <div id="wizardResults" style="display:none;"></div>
+    </div>
+</div>
+
 <!-- ==================== Batch Analysis Modal ==================== -->
 <div id="batchAnalysisModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.92); z-index:20000; overflow-y:auto;">
     <div style="position:sticky; top:0; z-index:1; background:rgba(20,20,28,0.95); border-bottom:1px solid rgba(255,255,255,0.06); padding:14px 20px; display:flex; justify-content:space-between; align-items:center; backdrop-filter:blur(20px);">
@@ -10307,7 +10718,7 @@ async function bomRunAnalysis() {
                     ci: currentCalc.dcpEval?.crosslinkCI || 0,
                     ciMin: currentCalc.dcpEval?.dynamicCI?.ciMin || 0,
                     ciMax: currentCalc.dcpEval?.dynamicCI?.ciMax || 0,
-                    ciOK: calcCIStatus(currentCalc.dcpEval?.crosslinkCI || 0, currentCalc.dcpEval?.dynamicCI?.ciMin || 0, currentCalc.dcpEval?.dynamicCI?.ciMax || 1, score),
+                    ciOK: calcCIStatus(currentCalc.dcpEval?.crosslinkCI || 0, currentCalc.dcpEval?.dynamicCI?.ciMin || 0, currentCalc.dcpEval?.dynamicCI?.ciMax || 1, score, currentCalc.dcpEval?.dynamicCI?.ciOptimalLow, currentCalc.dcpEval?.dynamicCI?.ciOptimalHigh),
                     crosslinkEff: currentCalc.crosslinkEff || 0,
                     frPhr: currentCalc.flameRetardant_phr || 0,
                     fillerPhr: currentCalc.inorganicFiller_phr || 0,
@@ -10348,6 +10759,374 @@ async function bomRunAnalysis() {
 function closeBOMImport() {
     document.getElementById('bomImportModal').style.display = 'none';
     bomParsedProducts = [];
+}
+
+// ==================== Formula Design Wizard ====================
+function openFormulaWizard() { document.getElementById('formulaWizardModal').style.display = 'block'; }
+
+function runFormulaWizard() {
+    const targetExp = parseFloat(document.getElementById('wizExpansion').value) || 25;
+    const resinType = document.getElementById('wizResinType').value;
+    const totalResin = parseFloat(document.getElementById('wizTotalResin').value) || 20;
+    const frType = document.getElementById('wizFR').value;
+    
+    const history = getCurrentHistory();
+    
+    // Step 1: Find best reference formulas from history
+    const refs = findReferenceFormulas(history, targetExp, resinType);
+    
+    // Step 2: Generate 3 formula proposals
+    const proposals = generateProposals(targetExp, resinType, totalResin, frType, refs);
+    
+    // Step 3: Validate each proposal by running calculate
+    const validated = proposals.map(p => validateProposal(p, totalResin));
+    
+    // Step 4: Render results
+    renderWizardResults(validated, refs, targetExp);
+}
+
+function findReferenceFormulas(history, targetExp, resinType) {
+    if (!history || history.length === 0) return [];
+    
+    return history.filter(r => {
+        const score = r.qualityScore || 0;
+        if (score < 84) return false;
+        const exp = r.dcpEval?.estimatedExpansion || 0;
+        if (Math.abs(exp - targetExp) > 10) return false;
+        const poeKg = r.raw_poe_kg || 0;
+        const hasPOE = poeKg > 0;
+        if (resinType === 'poe_blend' && !hasPOE) return false;
+        if (resinType !== 'poe_blend' && hasPOE) return false;
+        return true;
+    }).map(r => {
+        const exp = r.dcpEval?.estimatedExpansion || 0;
+        const distance = Math.abs(exp - targetExp);
+        const scoreBonus = (r.qualityScore || 0) >= 92 ? 0 : 5;
+        return { ...r, distance: distance + scoreBonus };
+    }).sort((a, b) => a.distance - b.distance).slice(0, 5);
+}
+
+function generateProposals(targetExp, resinType, totalResin, frType, refs) {
+    // AC/DCP curve: ratio = 0.0112*exp² - 0.0201*exp + 6.98 (115 products, R²=0.87)
+    const optimalACDCP = 0.0112 * targetExp * targetExp - 0.0201 * targetExp + 6.98;
+    
+    // AC requirement: AC_phr = 0.8253 * exp - 3.82 (RMSE=0.23, extremely clean linear fit)
+    const baseAC_phr = Math.max(5.0, 0.8253 * targetExp - 3.82);
+    const baseDCP_phr = baseAC_phr / optimalACDCP;
+    
+    // Resin split depends on type
+    let resinSplits;
+    switch(resinType) {
+        case 'eva_only':
+            resinSplits = [
+                { name: 'High VA', eva16: 0, eva25: 100, ldpe: 0, poe: 0, vaNote: 'VA25% 高柔軟性' },
+                { name: 'Mid VA', eva16: 40, eva25: 60, ldpe: 0, poe: 0, vaNote: 'VA16+25 平衡' },
+                { name: 'Low VA', eva16: 80, eva25: 20, ldpe: 0, poe: 0, vaNote: 'VA16 高強度' },
+            ];
+            break;
+        case 'ldpe_only':
+            resinSplits = [
+                { name: 'Pure LDPE', eva16: 0, eva25: 0, ldpe: 100, poe: 0, vaNote: 'LDPE 高剛性' },
+                { name: 'LDPE+EVA', eva16: 15, eva25: 0, ldpe: 85, poe: 0, vaNote: 'EVA微量添加' },
+                { name: 'LDPE Blend', eva16: 0, eva25: 10, ldpe: 90, poe: 0, vaNote: 'EVA25少量' },
+            ];
+            break;
+        case 'poe_blend':
+            resinSplits = [
+                { name: 'POE 15%', eva16: 40, eva25: 30, ldpe: 0, poe: 15, vaNote: 'POE低添加' },
+                { name: 'POE 25%', eva16: 30, eva25: 20, ldpe: 0, poe: 25, vaNote: 'POE中添加(RE標準)' },
+                { name: 'POE 30%', eva16: 20, eva25: 20, ldpe: 0, poe: 30, vaNote: 'POE高添加 高彈性' },
+            ];
+            break;
+        default: // eva_ldpe
+            resinSplits = [
+                { name: 'Standard', eva16: 35, eva25: 25, ldpe: 40, poe: 0, vaNote: '標準通用配方' },
+                { name: 'High EVA', eva16: 30, eva25: 40, ldpe: 30, poe: 0, vaNote: 'EVA偏高 柔軟' },
+                { name: 'High PE', eva16: 25, eva25: 15, ldpe: 60, poe: 0, vaNote: 'LDPE偏高 剛性' },
+            ];
+    }
+    
+    // Refine from reference formulas if available
+    if (refs.length > 0) {
+        const best = refs[0];
+        const bestTotal = (best.raw_eva16_kg||0) + (best.raw_eva25_kg||0) + (best.raw_ldpe24_kg||0) + (best.raw_ldpe40_kg||0) + (best.raw_poe_kg||0);
+        if (bestTotal > 0) {
+            resinSplits[0] = {
+                name: `Ref: ${best.productModel || 'Best'}`,
+                eva16: ((best.raw_eva16_kg||0) / bestTotal * 100),
+                eva25: ((best.raw_eva25_kg||0) / bestTotal * 100),
+                ldpe: (((best.raw_ldpe24_kg||0) + (best.raw_ldpe40_kg||0)) / bestTotal * 100),
+                poe: ((best.raw_poe_kg||0) / bestTotal * 100),
+                vaNote: `Score=${best.qualityScore} 歷史參考`
+            };
+        }
+    }
+    
+    // FR adjustment
+    let frKg = 0, frField = '';
+    if (frType === 'redp') { frKg = totalResin * 0.08; frField = 'redp'; }
+    else if (frType === 'brsb') { frKg = totalResin * 0.12; frField = 'brsb'; }
+    else if (frType === 'ath') { frKg = totalResin * 0.25; frField = 'ath'; }
+    
+    // DCP adjustment for POE (needs ~30% more DCP)
+    const poeDcpBoost = resinType === 'poe_blend' ? 1.25 : 1.0;
+    // DCP adjustment for FR (interference)
+    const frDcpBoost = frType !== 'none' ? 1.08 : 1.0;
+    
+    return resinSplits.map(split => {
+        const eva16_kg = totalResin * split.eva16 / 100;
+        const eva25_kg = totalResin * split.eva25 / 100;
+        const ldpe_kg = totalResin * split.ldpe / 100;
+        const poe_kg = totalResin * split.poe / 100;
+        
+        const ac_phr = baseAC_phr;
+        const dcp_phr = baseDCP_phr * poeDcpBoost * frDcpBoost;
+        const zno_phr = ac_phr * 0.12;  // ZnO ≈ 12% of AC
+        const urea_phr = ac_phr * 0.06;  // Urea ≈ 6% of AC
+        const bht_phr = dcp_phr * 0.15;  // BHT ≈ 15% of DCP
+        
+        const ac_kg = ac_phr * totalResin / 100;
+        const dcp_g = dcp_phr * totalResin * 10;
+        const zno_g = zno_phr * totalResin * 10;
+        const urea_g = urea_phr * totalResin * 10;
+        const bht_g = bht_phr * totalResin * 10;
+        
+        return {
+            name: split.name,
+            vaNote: split.vaNote,
+            eva16: eva16_kg, eva25: eva25_kg, ldpe: ldpe_kg, poe: poe_kg,
+            acpe: ac_kg * 0.7, aceva: ac_kg * 0.3,  // 70/30 PE/EVA split
+            dcp_g, zno_g, urea_g, bht_g,
+            filler: 0,
+            fr: frKg, frField,
+            ac_phr, dcp_phr, acDcpRatio: ac_phr / dcp_phr,
+            targetExp: targetExp,
+            split
+        };
+    });
+}
+
+function validateProposal(p, totalResin) {
+    // Fill form with proposal, run calculate, capture score
+    const formFields = ['productModel','batchId','eva16','eva25','ldpe24','ldpe40','poe','acpe','aceva','filler','color1','color2','color3','color4','color5','redp','brsb','ath','cp70','dcp','bht','zno','urea','powder','peg','eva16va','eva25va','temp1','time1','temp2','time2','mixTime','dosageTemp','rotorSpeed','dischargeTemp','mixInitTemp','tailMaterial','colorType1','colorType2','colorType3','colorType4','colorType5','uvstab'];
+    const savedForm = {};
+    formFields.forEach(id => { const el = document.getElementById(id); if(el) savedForm[id] = el.value; });
+    
+    // Set proposal values
+    document.getElementById('productModel').value = 'WIZARD-' + p.name;
+    document.getElementById('batchId').value = 'AUTO';
+    document.getElementById('eva16').value = p.eva16.toFixed(1);
+    document.getElementById('eva25').value = p.eva25.toFixed(1);
+    document.getElementById('ldpe24').value = p.ldpe.toFixed(1);
+    document.getElementById('ldpe40').value = '0';
+    document.getElementById('poe').value = p.poe.toFixed(1);
+    document.getElementById('acpe').value = p.acpe.toFixed(2);
+    document.getElementById('aceva').value = p.aceva.toFixed(2);
+    document.getElementById('filler').value = '0';
+    document.getElementById('dcp').value = p.dcp_g.toFixed(0);
+    document.getElementById('bht').value = p.bht_g.toFixed(0);
+    document.getElementById('zno').value = p.zno_g.toFixed(0);
+    document.getElementById('urea').value = p.urea_g.toFixed(0);
+    document.getElementById('powder').value = '0';
+    document.getElementById('peg').value = '0';
+    document.getElementById('uvstab').value = '0';
+    document.getElementById('redp').value = p.frField === 'redp' ? p.fr.toFixed(2) : '0';
+    document.getElementById('brsb').value = p.frField === 'brsb' ? p.fr.toFixed(2) : '0';
+    document.getElementById('ath').value = p.frField === 'ath' ? p.fr.toFixed(2) : '0';
+    document.getElementById('cp70').value = '0';
+    for (let i=1; i<=5; i++) { document.getElementById('color'+i).value = ''; }
+    document.getElementById('temp1').value = '148';
+    document.getElementById('time1').value = '28';
+    document.getElementById('temp2').value = '164';
+    document.getElementById('time2').value = '25';
+    document.getElementById('tailMaterial').value = '0';
+    // Process defaults for wizard validation
+    if (!document.getElementById('mixTime').value) document.getElementById('mixTime').value = '18';
+    if (!document.getElementById('rotorSpeed').value) document.getElementById('rotorSpeed').value = '55';
+    if (!document.getElementById('dosageTemp').value) document.getElementById('dosageTemp').value = '90';
+    
+    // Run calculate silently
+    const resultsDiv = document.getElementById('results');
+    const prevDisplay = resultsDiv.style.display;
+    resultsDiv.style.display = 'none';
+    
+    try {
+        calculate();
+        p.score = currentCalc.qualityScore || 0;
+        p.ci = currentCalc.dcpEval?.crosslinkCI || 0;
+        p.ciStatus = currentCalc.dcpEval?.status || '';
+        p.warnings = currentCalc.warnings || [];
+        p.suggestions = currentCalc.suggestions || [];
+        p.predExp = currentCalc.dcpEval?.estimatedExpansion || 0;
+        p.density = currentCalc.predictedDensity || 0;
+    } catch(e) {
+        p.score = 0;
+        p.error = e.message;
+    }
+    
+    resultsDiv.style.display = prevDisplay;
+    
+    // Restore form
+    formFields.forEach(id => { const el = document.getElementById(id); if(el) el.value = savedForm[id] || ''; });
+    
+    return p;
+}
+
+function renderWizardResults(proposals, refs, targetExp) {
+    const div = document.getElementById('wizardResults');
+    div.style.display = 'block';
+    
+    // Sort by score descending
+    proposals.sort((a, b) => b.score - a.score);
+    
+    let html = '';
+    
+    // Reference formulas
+    if (refs.length > 0) {
+        html += `<div style="background:rgba(30,30,38,0.95); border:1px solid rgba(100,100,100,0.2); border-radius:12px; padding:16px; margin-bottom:12px;">
+            <div style="font-size:12px; font-weight:600; color:#86868B; margin-bottom:8px;">REFERENCE FORMULAS (from History, closest to ${targetExp}X)</div>
+            ${refs.slice(0,3).map(r => `<div style="padding:4px 8px; margin:3px 0; background:rgba(255,255,255,0.03); border-radius:4px; font-size:11px; color:#aaa; display:flex; justify-content:space-between;">
+                <span><strong style="color:#F5F5F7;">${r.productModel||''}</strong> ${r.batchId||''}</span>
+                <span>Exp=${(r.dcpEval?.estimatedExpansion||0).toFixed(1)}X Score=<span style="color:#30D158;">${r.qualityScore||'-'}</span></span>
+            </div>`).join('')}
+        </div>`;
+    }
+    
+    // Proposals
+    proposals.forEach((p, i) => {
+        const scoreColor = p.score >= 92 ? '#30D158' : p.score >= 80 ? '#FFD60A' : '#FF453A';
+        const tier = getCITierDisplay(p.ciStatus);
+        const labScale = parseFloat(document.getElementById('wizLabScale')?.value) || 0;
+        const prodTotalKg = p.eva16 + p.eva25 + p.ldpe + p.poe + (p.acpe||0) + (p.aceva||0) + (p.fr||0) + (p.dcp_g + p.bht_g + p.zno_g + p.urea_g) / 1000;
+        const scaleFactor = labScale > 0 ? labScale / (prodTotalKg * 1000) : 0;
+        
+        html += `<div style="background:rgba(30,30,38,0.95); border:1px solid ${i===0 ? 'rgba(191,90,242,0.4)' : 'rgba(100,100,100,0.2)'}; border-radius:12px; padding:16px; margin-bottom:12px; ${i===0 ? 'box-shadow:0 0 20px rgba(191,90,242,0.1);' : ''}">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                    <span style="font-size:16px; font-weight:700; color:#F5F5F7;">${p.name}</span>
+                    ${i===0 ? '<span style="margin-left:8px; padding:2px 8px; background:rgba(191,90,242,0.2); color:#BF5AF2; border-radius:4px; font-size:10px; font-weight:600;">RECOMMENDED</span>' : ''}
+                    <div style="font-size:10px; color:#86868B; margin-top:2px;">${p.vaNote}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:24px; font-weight:700; color:${scoreColor};">${p.score}</div>
+                    <div style="font-size:10px; color:#86868B;">Score</div>
+                </div>
+            </div>
+            
+            <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin-bottom:10px;">
+                <div style="background:rgba(255,159,10,0.1); padding:6px 8px; border-radius:6px; text-align:center;">
+                    <div style="font-size:9px; color:#FF9F0A;">EVA</div>
+                    <div style="font-size:13px; font-weight:600; color:#FFD60A;">${(p.eva16+p.eva25).toFixed(1)}kg</div>
+                    ${scaleFactor > 0 ? `<div style="font-size:10px; color:#BF5AF2;">${((p.eva16+p.eva25)*scaleFactor*1000).toFixed(1)}g</div>` : ''}
+                </div>
+                <div style="background:rgba(100,210,255,0.1); padding:6px 8px; border-radius:6px; text-align:center;">
+                    <div style="font-size:9px; color:#64D2FF;">LDPE</div>
+                    <div style="font-size:13px; font-weight:600; color:#64D2FF;">${p.ldpe.toFixed(1)}kg</div>
+                    ${scaleFactor > 0 ? `<div style="font-size:10px; color:#BF5AF2;">${(p.ldpe*scaleFactor*1000).toFixed(1)}g</div>` : ''}
+                </div>
+                <div style="background:rgba(191,90,242,0.1); padding:6px 8px; border-radius:6px; text-align:center;">
+                    <div style="font-size:9px; color:#BF5AF2;">POE</div>
+                    <div style="font-size:13px; font-weight:600; color:#BF5AF2;">${p.poe > 0 ? p.poe.toFixed(1)+'kg' : '-'}</div>
+                    ${scaleFactor > 0 && p.poe > 0 ? `<div style="font-size:10px; color:#BF5AF2;">${(p.poe*scaleFactor*1000).toFixed(1)}g</div>` : ''}
+                </div>
+                <div style="background:rgba(48,209,88,0.1); padding:6px 8px; border-radius:6px; text-align:center;">
+                    <div style="font-size:9px; color:#30D158;">Exp.</div>
+                    <div style="font-size:13px; font-weight:600; color:#30D158;">${p.predExp.toFixed(1)}X</div>
+                </div>
+            </div>
+            
+            <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; margin-bottom:10px; font-size:11px;">
+                <div style="text-align:center; color:#FFD60A;"><div style="color:#86868B; font-size:9px;">AC</div>${p.ac_phr.toFixed(2)} phr${scaleFactor > 0 ? `<div style="font-size:9px; color:#BF5AF2;">${((p.acpe+p.aceva)*scaleFactor*1000).toFixed(1)}g</div>` : ''}</div>
+                <div style="text-align:center; color:#FF9F0A;"><div style="color:#86868B; font-size:9px;">DCP</div>${p.dcp_g.toFixed(0)}g${scaleFactor > 0 ? `<div style="font-size:9px; color:#BF5AF2;">${(p.dcp_g*scaleFactor).toFixed(2)}g</div>` : ''}</div>
+                <div style="text-align:center; color:#8aa;"><div style="color:#86868B; font-size:9px;">AC/DCP</div>${p.acDcpRatio.toFixed(1)}</div>
+                <div style="text-align:center; color:#8ca;"><div style="color:#86868B; font-size:9px;">CI</div>${p.ci.toFixed(3)}</div>
+                <div style="text-align:center;"><div style="color:#86868B; font-size:9px;">Status</div><span style="padding:1px 5px; border-radius:3px; font-size:9px; font-weight:600; color:${tier.color}; background:${tier.bg};">${tier.icon} ${tier.label}</span></div>
+            </div>
+            
+            <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; font-size:10px; color:#999; border-top:1px solid rgba(255,255,255,0.05); padding-top:8px;">
+                <div>ZnO: ${p.zno_g.toFixed(0)}g${scaleFactor > 0 ? ` <span style="color:#BF5AF2;">(${(p.zno_g*scaleFactor).toFixed(2)}g)</span>` : ''}</div>
+                <div>Urea: ${p.urea_g.toFixed(0)}g${scaleFactor > 0 ? ` <span style="color:#BF5AF2;">(${(p.urea_g*scaleFactor).toFixed(2)}g)</span>` : ''}</div>
+                <div>BHT: ${p.bht_g.toFixed(0)}g${scaleFactor > 0 ? ` <span style="color:#BF5AF2;">(${(p.bht_g*scaleFactor).toFixed(2)}g)</span>` : ''}</div>
+                <div>Density: ${p.density.toFixed(3)}</div>
+            </div>
+            
+            ${scaleFactor > 0 ? `<div style="margin-top:6px; padding:6px 8px; background:rgba(191,90,242,0.1); border:1px solid rgba(191,90,242,0.2); border-radius:6px; font-size:10px; color:#BF5AF2; text-align:center;">
+                Lab Scale: ${labScale}g total (${(scaleFactor*100).toFixed(2)}% of production)
+            </div>` : ''}
+            
+            ${p.warnings.length > 0 ? `<div style="margin-top:8px; padding:6px 8px; background:rgba(140,80,80,0.1); border-radius:6px; font-size:10px; color:#ca8;">
+                ${p.warnings.slice(0,2).map(w => '<div style="margin:2px 0;">'+w+'</div>').join('')}
+            </div>` : ''}
+            
+            <div style="display:flex; gap:8px; margin-top:10px;">
+                <button onclick="applyWizardFormula(${i}, false)" style="flex:1; padding:8px; background:rgba(191,90,242,0.15); color:#BF5AF2; border:1px solid rgba(191,90,242,0.3); border-radius:6px; cursor:pointer; font-weight:600; font-size:12px;">Apply Production</button>
+                ${scaleFactor > 0 ? `<button onclick="applyWizardFormula(${i}, true)" style="flex:1; padding:8px; background:rgba(191,90,242,0.25); color:#BF5AF2; border:1px solid rgba(191,90,242,0.4); border-radius:6px; cursor:pointer; font-weight:600; font-size:12px;">Apply Lab (${labScale}g)</button>` : ''}
+            </div>
+        </div>`;
+    });
+    
+    div.innerHTML = html;
+    
+    // Store proposals for apply
+    window._wizardProposals = proposals;
+}
+
+function applyWizardFormula(index, labMode) {
+    const p = window._wizardProposals[index];
+    if (!p) return;
+    
+    const labScale = labMode ? (parseFloat(document.getElementById('wizLabScale')?.value) || 0) : 0;
+    const prodTotalKg = p.eva16 + p.eva25 + p.ldpe + p.poe + (p.acpe||0) + (p.aceva||0) + (p.fr||0) + (p.dcp_g + p.bht_g + p.zno_g + p.urea_g) / 1000;
+    const sf = labScale > 0 ? labScale / (prodTotalKg * 1000) : 1;
+    
+    if (labMode && labScale > 0) {
+        // Lab mode: all values in g
+        document.getElementById('productModel').value = 'WIZARD-LAB-' + p.name;
+        document.getElementById('eva16').value = (p.eva16 * sf * 1000).toFixed(1);
+        document.getElementById('eva25').value = (p.eva25 * sf * 1000).toFixed(1);
+        document.getElementById('ldpe24').value = (p.ldpe * sf * 1000).toFixed(1);
+        document.getElementById('ldpe40').value = '0';
+        document.getElementById('poe').value = (p.poe * sf * 1000).toFixed(1);
+        document.getElementById('acpe').value = (p.acpe * sf * 1000).toFixed(2);
+        document.getElementById('aceva').value = (p.aceva * sf * 1000).toFixed(2);
+        document.getElementById('dcp').value = (p.dcp_g * sf).toFixed(2);
+        document.getElementById('bht').value = (p.bht_g * sf).toFixed(2);
+        document.getElementById('zno').value = (p.zno_g * sf).toFixed(2);
+        document.getElementById('urea').value = (p.urea_g * sf).toFixed(2);
+        document.getElementById('redp').value = p.frField === 'redp' ? (p.fr * sf * 1000).toFixed(2) : '0';
+        document.getElementById('brsb').value = p.frField === 'brsb' ? (p.fr * sf * 1000).toFixed(2) : '0';
+        document.getElementById('ath').value = p.frField === 'ath' ? (p.fr * sf * 1000).toFixed(2) : '0';
+        // Switch to Lab mode if not already
+        if (currentMode !== 'lab') {
+            switchMode('lab');
+        }
+    } else {
+        // Production mode: kg/g as normal
+        document.getElementById('productModel').value = 'WIZARD-' + p.name;
+        document.getElementById('eva16').value = p.eva16.toFixed(1);
+        document.getElementById('eva25').value = p.eva25.toFixed(1);
+        document.getElementById('ldpe24').value = p.ldpe.toFixed(1);
+        document.getElementById('ldpe40').value = '0';
+        document.getElementById('poe').value = p.poe.toFixed(1);
+        document.getElementById('acpe').value = p.acpe.toFixed(2);
+        document.getElementById('aceva').value = p.aceva.toFixed(2);
+        document.getElementById('dcp').value = p.dcp_g.toFixed(0);
+        document.getElementById('bht').value = p.bht_g.toFixed(0);
+        document.getElementById('zno').value = p.zno_g.toFixed(0);
+        document.getElementById('urea').value = p.urea_g.toFixed(0);
+        document.getElementById('redp').value = p.frField === 'redp' ? p.fr.toFixed(2) : '0';
+        document.getElementById('brsb').value = p.frField === 'brsb' ? p.fr.toFixed(2) : '0';
+        document.getElementById('ath').value = p.frField === 'ath' ? p.fr.toFixed(2) : '0';
+    }
+    document.getElementById('temp1').value = '148';
+    document.getElementById('time1').value = '28';
+    document.getElementById('temp2').value = '164';
+    document.getElementById('time2').value = '25';
+    
+    document.getElementById('formulaWizardModal').style.display = 'none';
+    calculate();
+    
+    if (typeof showToast === 'function') showToast(labMode ? `Lab formula applied (${labScale}g scale)` : 'Production formula applied');
 }
 
 // ==================== Batch Analysis Engine ====================
@@ -10530,7 +11309,7 @@ async function runBatchAnalysis() {
                     ci: currentCalc.dcpEval?.crosslinkCI || 0,
                     ciMin: currentCalc.dcpEval?.dynamicCI?.ciMin || 0,
                     ciMax: currentCalc.dcpEval?.dynamicCI?.ciMax || 0,
-                    ciOK: calcCIStatus(currentCalc.dcpEval?.crosslinkCI || 0, currentCalc.dcpEval?.dynamicCI?.ciMin || 0, currentCalc.dcpEval?.dynamicCI?.ciMax || 1, score),
+                    ciOK: calcCIStatus(currentCalc.dcpEval?.crosslinkCI || 0, currentCalc.dcpEval?.dynamicCI?.ciMin || 0, currentCalc.dcpEval?.dynamicCI?.ciMax || 1, score, currentCalc.dcpEval?.dynamicCI?.ciOptimalLow, currentCalc.dcpEval?.dynamicCI?.ciOptimalHigh),
                     crosslinkEff: currentCalc.crosslinkEff || 0,
                     frPhr: currentCalc.flameRetardant_phr || 0,
                     fillerPhr: currentCalc.inorganicFiller_phr || 0,
@@ -10561,19 +11340,59 @@ async function runBatchAnalysis() {
     renderBatchResults();
 }
 
-// CI status: 3-level (OK/WARN/NG) based on how far CI is from range
-function calcCIStatus(ci, ciMin, ciMax, score) {
-    if (ci <= 0 || ciMin <= 0) return 'OK';
+// v8.0b: CI status: 7-tier grading with label, color, icon
+function calcCIStatus(ci, ciMin, ciMax, score, ciOptLow, ciOptHigh) {
+    if (ci <= 0 || ciMin <= 0) return 'Optimal';
     const range = ciMax - ciMin;
-    if (range <= 0) return 'OK';
-    if (ci >= ciMin && ci <= ciMax) return 'OK';
-    // Outside range: check severity
-    const deviation = ci < ciMin ? (ciMin - ci) / range : (ci - ciMax) / range;
-    // Small deviation (<10%): WARN regardless of score
-    if (deviation < 0.10) return 'WARN';
-    // Moderate deviation (<20%) with decent score (≥85): WARN
-    if (score >= 85 && deviation < 0.20) return 'WARN';
-    return 'NG';
+    if (range <= 0) return 'Optimal';
+    
+    if (ci < ciMin * 0.70) return '嚴重偏低';
+    if (ci > ciMax * 1.30) return '嚴重偏高';
+    
+    if (ci < ciMin) {
+        const underPct = (ciMin - ci) / range;
+        return underPct > 0.15 ? '偏低' : '稍偏低';
+    }
+    if (ci > ciMax) {
+        const overPct = (ci - ciMax) / range;
+        return overPct > 0.15 ? '偏高' : '稍偏高';
+    }
+    
+    // Inside range
+    const optLow = ciOptLow || (ciMin + range * 0.30);
+    const optHigh = ciOptHigh || (ciMin + range * 0.70);
+    if (ci >= optLow && ci <= optHigh) return 'Optimal';
+    if (ci < optLow) return '合格偏低';
+    return '合格偏高';
+}
+
+// v8.0b: CI tier display config
+function getCITierDisplay(tier) {
+    const map = {
+        '嚴重Insufficient': { label: '嚴重偏低', color: '#FF453A', bg: '#FF453A22', icon: '⬇⬇' },
+        '嚴重偏低': { label: '嚴重偏低', color: '#FF453A', bg: '#FF453A22', icon: '⬇⬇' },
+        '嚴重過度': { label: '嚴重偏高', color: '#FF453A', bg: '#FF453A22', icon: '⬆⬆' },
+        '嚴重偏高': { label: '嚴重偏高', color: '#FF453A', bg: '#FF453A22', icon: '⬆⬆' },
+        '交聯偏低': { label: '偏低',     color: '#FF6B6B', bg: '#FF6B6B18', icon: '⬇' },
+        '偏低':     { label: '偏低',     color: '#FF6B6B', bg: '#FF6B6B18', icon: '⬇' },
+        '交聯Insufficient': { label: '偏低', color: '#FF6B6B', bg: '#FF6B6B18', icon: '⬇' },
+        '交聯過高': { label: '偏高',     color: '#FF6B6B', bg: '#FF6B6B18', icon: '⬆' },
+        '交聯過度': { label: '偏高',     color: '#FF6B6B', bg: '#FF6B6B18', icon: '⬆' },
+        '偏高':     { label: '偏高',     color: '#FF6B6B', bg: '#FF6B6B18', icon: '⬆' },
+        '交聯稍偏低': { label: '稍偏低', color: '#FFB340', bg: '#FFB34018', icon: '↓' },
+        '稍偏低':   { label: '稍偏低',   color: '#FFB340', bg: '#FFB34018', icon: '↓' },
+        '交聯稍偏高': { label: '稍偏高', color: '#FFB340', bg: '#FFB34018', icon: '↑' },
+        '稍偏高':   { label: '稍偏高',   color: '#FFB340', bg: '#FFB34018', icon: '↑' },
+        '合格-Low': { label: '合格↓',    color: '#86868B', bg: '#86868B15', icon: '' },
+        '合格偏低': { label: '合格↓',    color: '#86868B', bg: '#86868B15', icon: '' },
+        '交聯良好': { label: 'Optimal',  color: '#30D158', bg: '#30D15820', icon: '✓' },
+        'Optimal':  { label: 'Optimal',  color: '#30D158', bg: '#30D15820', icon: '✓' },
+        '合格-High':{ label: '合格↑',    color: '#86868B', bg: '#86868B15', icon: '' },
+        '合格偏高': { label: '合格↑',    color: '#86868B', bg: '#86868B15', icon: '' },
+        '反應不完全': { label: '反應不全', color: '#FF9F0A', bg: '#FF9F0A18', icon: '⚠' },
+        '需檢視':   { label: '需檢視',   color: '#86868B', bg: '#86868B15', icon: '?' },
+    };
+    return map[tier] || { label: String(tier||'?').substring(0,6), color: '#86868B', bg: '#86868B15', icon: '' };
 }
 
 function renderBatchResults() {
@@ -10584,7 +11403,7 @@ function renderBatchResults() {
     const scores = batchResults.map(r => r.score);
     const avgScore = (scores.reduce((a,b) => a+b, 0) / scores.length).toFixed(1);
     const passRate = (scores.filter(s => s >= 70).length / scores.length * 100).toFixed(1);
-    const ciPassRate = (batchResults.filter(r => r.ciOK === 'OK' || r.ciOK === 'WARN').length / batchResults.length * 100).toFixed(1);
+    const ciPassRate = (batchResults.filter(r => !['嚴重偏低','偏低','嚴重偏高','偏高'].includes(r.ciOK)).length / batchResults.length * 100).toFixed(1);
     // Model accuracy: % of records with 0 warnings (perfect prediction)
     const zeroWarnCount = batchResults.filter(r => r.warningCount === 0).length;
     const accuracy = (zeroWarnCount / batchResults.length * 100).toFixed(1);
@@ -10615,9 +11434,9 @@ function renderBatchResults() {
             <td style="padding:4px 8px;">${r.dcp_phr.toFixed(3)}</td>
             <td style="padding:4px 8px;">${r.acDcpRatio.toFixed(1)}</td>
             <td style="padding:4px 8px;">${r.ci.toFixed(3)}</td>
-            <td style="padding:4px 8px;color:${r.ciOK === 'OK' ? '#8c8' : r.ciOK === 'WARN' ? '#cc9' : '#c77'};font-weight:600;">${r.ciOK}</td>
-            <td style="padding:4px 8px;color:#ca8;font-size:10px;white-space:normal;max-width:200px;">${r.warnings || '-'}</td>
-            <td style="padding:4px 8px;color:#8ca;font-size:10px;white-space:normal;max-width:200px;">${r.suggestions || '-'}</td>
+            <td style="padding:4px 8px;"><span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:600;color:${getCITierDisplay(r.ciOK).color};background:${getCITierDisplay(r.ciOK).bg};">${getCITierDisplay(r.ciOK).icon} ${getCITierDisplay(r.ciOK).label}</span></td>
+            <td style="padding:4px 8px;font-size:10px;white-space:normal;max-width:200px;">${(r.warnings||'-').split(';').map(w=>w.trim()).filter(w=>w).map(w=>{const c=w.includes('[Warning]')||w.includes('[嚴重]')?'#FF6B6B':w.includes('[Mild]')?'#FFB340':w.includes('[Info]')?'#64D2FF':'#ca8';return '<div style="margin:1px 0;padding:2px 4px;border-left:2px solid '+c+';line-height:1.2;">'+w+'</div>';}).join('')||'-'}</td>
+            <td style="padding:4px 8px;font-size:10px;white-space:normal;max-width:200px;">${(r.suggestions||'-').split(';').map(s=>s.trim()).filter(s=>s).map(s=>'<div style="margin:1px 0;padding:2px 4px;border-left:2px solid #5a7a6a;line-height:1.2;">'+s+'</div>').join('')||'-'}</td>
         </tr>`;
     }).join('');
     
@@ -10675,7 +11494,7 @@ function renderBatchCharts() {
     // 4. AC/DCP Ratio vs Score (scatter)
     new Chart(document.getElementById('chartAcDcpScore'), {
         type: 'scatter',
-        data: { datasets: [{ data: batchResults.map(r => ({x: r.acDcpRatio, y: r.score})), backgroundColor: batchResults.map(r => r.ciOK === 'OK' ? '#0A84FF99' : r.ciOK === 'WARN' ? '#FF9F0A99' : '#FF453A99'), pointRadius: 5 }] },
+        data: { datasets: [{ data: batchResults.map(r => ({x: r.acDcpRatio, y: r.score})), backgroundColor: batchResults.map(r => {const t=getCITierDisplay(r.ciOK);return t.color+'99';}), pointRadius: 5 }] },
         options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { title: { display: true, text: 'AC/DCP Ratio', color: '#888' }, ticks: { color: '#888' }, grid: { color: '#333' } }, y: { title: { display: true, text: 'Quality Score', color: '#888' }, ticks: { color: '#888' }, grid: { color: '#333' }, min: 0, max: 100 } } }
     });
 }
@@ -10701,7 +11520,7 @@ function exportBatchReport() {
     const scores = batchResults.map(r => r.score);
     const avg = (scores.reduce((a,b)=>a+b,0)/scores.length).toFixed(1);
     const pass = (scores.filter(s => s >= 70).length / scores.length * 100).toFixed(1);
-    const ciPass = (batchResults.filter(r => r.ciOK === 'OK' || r.ciOK === 'WARN').length / batchResults.length * 100).toFixed(1);
+    const ciPass = (batchResults.filter(r => !['嚴重偏低','偏低','嚴重偏高','偏高'].includes(r.ciOK)).length / batchResults.length * 100).toFixed(1);
     const noWarnPct = (batchResults.filter(r => r.warningCount === 0).length / batchResults.length * 100).toFixed(1);
     const now = new Date().toISOString().slice(0,19).replace('T',' ');
     
@@ -10734,17 +11553,32 @@ function exportBatchReport() {
     </div>
     
     <table>
-    <tr><th>#</th><th>Date</th><th>Model</th><th>Batch</th><th>Score</th><th>Density</th><th>Exp.</th><th>AC phr</th><th>DCP phr</th><th>AC/DCP</th><th>CI</th><th>CI OK</th><th>Warnings</th><th>Suggestions</th></tr>`;
+    <tr><th>#</th><th>Date</th><th>Model</th><th>Batch</th><th>Score</th><th>Density</th><th>Exp.</th><th>AC phr</th><th>DCP phr</th><th>AC/DCP</th><th>CI</th><th>CI Status</th><th>Warnings</th><th>Suggestions</th></tr>`;
     
     [...batchResults].sort((a,b) => a.score - b.score).forEach(r => {
         const sc = r.score >= 80 ? 'score-high' : r.score >= 60 ? 'score-mid' : 'score-low';
+        const tier = getCITierDisplay(r.ciOK);
+        // Format warnings with line breaks
+        const fmtWarnings = (r.warnings || '-').split(';').map(w => w.trim()).filter(w => w).map(w => {
+            const isWarning = w.includes('[Warning]') || w.includes('[嚴重]');
+            const isMild = w.includes('[Mild]');
+            const isInfo = w.includes('[Info]');
+            const color = isWarning ? '#FF6B6B' : isMild ? '#FFB340' : isInfo ? '#64D2FF' : '#ccc';
+            return `<div style="margin:2px 0; padding:3px 5px; border-left:2px solid ${color}; font-size:10px; line-height:1.3;">${w}</div>`;
+        }).join('') || '-';
+        // Format suggestions with line breaks
+        const fmtSuggestions = (r.suggestions || '-').split(';').map(s => s.trim()).filter(s => s).map(s => {
+            return `<div style="margin:2px 0; padding:3px 5px; border-left:2px solid #5a7a6a; font-size:10px; line-height:1.3;">${s}</div>`;
+        }).join('') || '-';
+        
         html += `<tr>
             <td>${r.index}</td><td>${r.date || '-'}</td><td><strong>${r.model}</strong></td><td>${r.batch}</td>
             <td class="${sc}">${r.score}</td><td>${r.density.toFixed(3)}</td><td>${r.expansion.toFixed(1)}X</td>
             <td>${r.ac_phr.toFixed(2)}</td><td>${r.dcp_phr.toFixed(3)}</td><td>${r.acDcpRatio.toFixed(1)}</td>
-            <td>${r.ci.toFixed(3)}</td><td class="${r.ciOK==='OK'?'ok':r.ciOK==='WARN'?'warn':'ng'}">${r.ciOK}</td>
-            <td style="font-size:10px;max-width:180px;white-space:normal;">${r.warnings||'-'}</td>
-            <td style="font-size:10px;max-width:180px;white-space:normal;">${r.suggestions||'-'}</td>
+            <td>${r.ci.toFixed(3)}</td>
+            <td><span style="display:inline-block; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600; color:${tier.color}; background:${tier.bg};">${tier.icon} ${tier.label}</span></td>
+            <td style="max-width:220px;white-space:normal;">${fmtWarnings}</td>
+            <td style="max-width:220px;white-space:normal;">${fmtSuggestions}</td>
         </tr>`;
     });
     
@@ -10829,7 +11663,7 @@ function loadHistoryToBatch() {
                     ci: ciVal,
                     ciMin: ciOpt?.ciMin || 0,
                     ciMax: ciOpt?.ciMax || 0,
-                    ciOK: calcCIStatus(ciVal, ciOpt?.ciMin || 0, ciOpt?.ciMax || 1, score),
+                    ciOK: calcCIStatus(ciVal, ciOpt?.ciMin || 0, ciOpt?.ciMax || 1, score, ciOpt?.ciOptimalLow, ciOpt?.ciOptimalHigh),
                     crosslinkEff: currentCalc.crosslinkEff || 0,
                     frPhr: currentCalc.flameRetardant_phr || 0,
                     fillerPhr: currentCalc.inorganicFiller_phr || 0,
@@ -10929,7 +11763,7 @@ async function runEngineerBacktest() {
                     ci: ciVal,
                     ciMin: ciOpt?.ciMin || 0,
                     ciMax: ciOpt?.ciMax || 0,
-                    ciOK: calcCIStatus(ciVal, ciOpt?.ciMin || 0, ciOpt?.ciMax || 1, newScore),
+                    ciOK: calcCIStatus(ciVal, ciOpt?.ciMin || 0, ciOpt?.ciMax || 1, newScore, ciOpt?.ciOptimalLow, ciOpt?.ciOptimalHigh),
                     crosslinkEff: currentCalc.crosslinkEff || 0,
                     frPhr: currentCalc.flameRetardant_phr || 0,
                     fillerPhr: currentCalc.inorganicFiller_phr || 0,
